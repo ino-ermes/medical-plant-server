@@ -1,7 +1,8 @@
 def create_app(test_config=None):
     
     from flaskr.utils.predict_helper import Predicter
-    Predicter.get_instance().loadModel('C:/Users/Mio/Downloads/besam_6_epochs.h5')
+    Predicter.get_instance().loadModel('C:/Users/Mio/Downloads/besame_InceptionResNetV2_24_epochs.h5')
+    # Predicter.get_instance().loadModel('C:/Users/Mio/Downloads/besam_6_epochs.h5')
     
     from flask import Flask
     app = Flask(__name__, instance_relative_config=True)

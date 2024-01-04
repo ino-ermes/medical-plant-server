@@ -1,4 +1,4 @@
-from flask import request, Blueprint
+from flask import request, Blueprint, redirect
 from flaskr.models.Plant import _plantColl
 from flaskr.models.Predict import _predictColl
 from flaskr.errors.bad_request import BadRequestError
@@ -22,7 +22,7 @@ def predictPlant(requestUserId):
     if not image_url:
         raise BadRequestError("No image was sent")
 
-    predictResults = Predicter.get_instance().predict(image_url)
+    predictResults = Predicter.get_instance().predict_top_5(image_url)
 
     _predictColl.insert_one(
         {
@@ -198,36 +198,7 @@ def predictPlantForRasp():
     if not image_url:
         raise BadRequestError("No image was sent")
 
-    predictResults = Predicter.get_instance().predict(image_url)
+    plantId = Predicter.get_instance().predict(image_url)
 
-    predictResults.sort()
-    indices = [int(i) for i in predictResults]
-    confidences = [round((i - int(i)) * 100.0, 2) for i in predictResults]
-    plantInfos = _plantColl.find(
-        {"_id": {"$in": indices}},
-        {
-            "common_name": 1,
-            "binomial_name": 1,
-            "thumb_img_url": 1,
-        },
-    ).sort("_id", ASCENDING)
-
-    plantInfos = list(plantInfos)
-    for i in range(5):
-        plantInfos[i]["confidence"] = confidences[i]
-
-    plantInfos.sort(key=lambda x: x["confidence"], reverse=True)
-
-    bestPlant = _plantColl.find_one({"_id": plantInfos[0]["_id"]}, {
-        "another_name": 1,
-        "family": 1,
-        "usable_part": 1,
-        "function": 1,
-        "usage": 1,
-    })
-
-    return {
-        "predict_list": plantInfos,
-        "best_plant": bestPlant,
-    }
+    return redirect(f"/api/v1/plants/{plantId}")
 
