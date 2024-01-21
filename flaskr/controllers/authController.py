@@ -95,17 +95,10 @@ def register():
             "created_at": datetime.now(),
         }
     )
-    newUser = _userColl.find_one({"_id": newUser.inserted_id}, {"hash_password": 0, "created_at": 0})
+    newUser = _userColl.find_one(
+        {"_id": newUser.inserted_id}, {"hash_password": 0, "created_at": 0}
+    )
 
-    # return {
-    #     "user": {
-    #         "id": newUser["_id"],
-    #         "name": newUser["name"],
-    #         "email": newUser["email"],
-    #         "role": newUser["role"],
-    #     },
-    # }
-    
     token = jwt.encode(
         {
             "user_id": str(newUser["_id"]),
@@ -220,7 +213,7 @@ def changePassword(requestUserId):
     if check_password_hash(user["hash_password"], curPassword):
         _userColl.update_one(
             {"_id": requestUserId},
-            {"hash_password": generate_password_hash(newPassword)},
+            {"$set": {"hash_password": generate_password_hash(newPassword)}},
         )
     else:
         raise UnauthenticatedError("after this speed")

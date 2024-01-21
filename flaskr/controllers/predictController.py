@@ -3,11 +3,13 @@ from flaskr.models.Plant import _plantColl
 from flaskr.models.Predict import _predictColl
 from flaskr.errors.bad_request import BadRequestError
 from flaskr.errors.not_found import NotFoundError
-from flaskr.utils.predict_helper import Predicter
 from flaskr.middlewares.auth import access_token_required
 from bson import ObjectId
 from datetime import datetime
 from pymongo import ASCENDING
+from flaskr.utils.predict_helper import PredictClient
+from cloudinary.uploader import upload
+from cloudinary import CloudinaryImage
 
 predictBP = Blueprint("predicts", __name__, url_prefix="/api/v1/predicts")
 
@@ -15,29 +17,28 @@ predictBP = Blueprint("predicts", __name__, url_prefix="/api/v1/predicts")
 @predictBP.post("")
 @access_token_required
 def predictPlant(requestUserId):
-    data = request.json
+    if "image" not in request.files or not request.files["image"].filename:
+        raise BadRequestError("Missing image")
+    if not request.files["image"].filename.endswith(("png", "jpg", "jpeg")):
+        raise BadRequestError("Unsupported image type")
 
-    image_url = data.get("img_url")
-
-    if not image_url:
-        raise BadRequestError("No image was sent")
-
-    predictResults = Predicter.get_instance().predict_top_5(image_url)
-
-    _predictColl.insert_one(
-        {
-            "user_id": requestUserId,
-            "plant_id": int(predictResults[0]),
-            "organ": "leaf",
-            "img_url": image_url,
-            "thumb_img_url": data.get("thumb_img_url"),
-            "status": "private",
-            "created_at": datetime.now(),
-            "updated_at": datetime.now(),
-        }
+    upload_result = upload(request.files["image"], resource_type="image")
+    img_url = upload_result["secure_url"]
+    thumb_img_url = CloudinaryImage(upload_result["public_id"]).build_url(
+        transformation=[{"width": 150, "height": 150, "crop": "fill"}]
     )
 
+    predictResults = PredictClient.get_instance().predict(img_url, "0")
+
+    print(predictResults)
+
+    if predictResults == -1:
+        return {
+            "predict_list": [],
+        }
+
     predictResults.sort()
+
     indices = [int(i) for i in predictResults]
     confidences = [round((i - int(i)) * 100.0, 2) for i in predictResults]
     plantInfos = _plantColl.find(
@@ -54,6 +55,19 @@ def predictPlant(requestUserId):
         plantInfos[i]["confidence"] = confidences[i]
 
     plantInfos.sort(key=lambda x: x["confidence"], reverse=True)
+
+    _predictColl.insert_one(
+        {
+            "user_id": requestUserId,
+            "plant_id": int(plantInfos[0]["_id"]),
+            "organ": "leaf",
+            "img_url": img_url,
+            "thumb_img_url": thumb_img_url,
+            "status": "private",
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
+        }
+    )
 
     return {
         "predict_list": plantInfos,
@@ -74,6 +88,12 @@ def getHistory(requestUserId):
     #     offset = 0
 
     total = _predictColl.count_documents({"user_id": requestUserId})
+    if total == 0:
+        return {
+            "predicts": [],
+            "total_pages": 0,
+        }
+
     num_per_page = 10
     num_pages = total // num_per_page
     if num_pages * num_per_page < total:
@@ -82,6 +102,8 @@ def getHistory(requestUserId):
     page = int(data.get("page") or 1)
     if page > num_pages:
         page = num_pages
+
+    skip = (page - 1) * num_per_page
 
     pipeline = [
         {
@@ -95,7 +117,7 @@ def getHistory(requestUserId):
             }
         },
         {
-            "$skip": (page - 1) * num_per_page,
+            "$skip": skip,
         },
         {
             "$limit": num_per_page,
@@ -117,10 +139,8 @@ def getHistory(requestUserId):
                 "plant_id": "$plant._id",
                 "common_name": "$plant.common_name",
                 "binomial_name": "$plant.binomial_name",
-                # "organ": 1,
                 "thumb_img_url": 1,
                 "status": 1,
-                # "created_at": 1,
                 "updated_at": 1,
             },
         },
@@ -189,16 +209,24 @@ def updatePredict(requestUserId, predict_id):
         "message": "updated successfully",
     }
 
+
 @predictBP.post("/rasp")
 def predictPlantForRasp():
-    data = request.json
+    if "image" not in request.files or not request.files["image"].filename:
+        raise BadRequestError("Missing image")
+    if not request.files["image"].filename.endswith(("png", "jpg", "jpeg")):
+        raise BadRequestError("Unsupported image type")
 
-    image_url = data.get("img_url")
+    upload_result = upload(request.files["image"], resource_type="image")
 
-    if not image_url:
-        raise BadRequestError("No image was sent")
+    img_url = upload_result["secure_url"]
 
-    plantId = Predicter.get_instance().predict(image_url)
+    plantId = PredictClient.get_instance().predict(img_url, "1")
+
+    if plantId == -1:
+        return {
+            "plant": {},
+            "organs": [],
+        }
 
     return redirect(f"/api/v1/plants/{plantId}")
-

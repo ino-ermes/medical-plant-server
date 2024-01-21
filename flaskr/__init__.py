@@ -1,25 +1,20 @@
-def create_app(test_config=None):
+def create_app():
     
-    from flaskr.utils.predict_helper import Predicter
-    Predicter.get_instance().loadModel('C:/Users/Mio/Downloads/besame_InceptionResNetV2_24_epochs.h5')
-    # Predicter.get_instance().loadModel('C:/Users/Mio/Downloads/besam_6_epochs.h5')
-    
-    from flask import Flask
+    from flask import Flask, current_app
     app = Flask(__name__, instance_relative_config=True)
-
+    @app.route("/")
+    def home():
+        return current_app.send_static_file('index.html')
+    @app.route('/favicon.ico')
+    def favicon():
+        return current_app.send_static_file('favicon.ico')
+    
     from dotenv import load_dotenv, dotenv_values
     load_dotenv()
     app.config.from_mapping(dotenv_values())
 
     from flask_cors import CORS
     CORS(app, origins="*")
-
-
-    try:
-        import os
-        os.makedirs(app.instance_path)
-    except OSError:
-        pass
 
     # connect to mongo
     from flaskr.db import db
@@ -67,5 +62,17 @@ def create_app(test_config=None):
     # api/v1/users
     from flaskr.controllers.userController import userBP
     app.register_blueprint(userBP)
+    
+    from flaskr.utils.predict_helper import PredictClient
+    PredictClient(5001).listen()
+    
+    import cloudinary
+    cloudinary.config(
+        cloud_name=app.config.get("CLOUD_NAME"),
+        api_key=app.config.get("API_KEY"),
+        api_secret=app.config.get("API_SECRET"),
+        secure=True,
+    )
+
     
     return app

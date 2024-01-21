@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Medical plant prediction</title>
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Trirong">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Trirong", serif;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-around;
+            height: 100%;
+        }
+
+        #video {
+            width: 80%;
+        }
+
+        #capture-btn {
+            padding: 5px 15px;
+        }
+
+        body {
+            position: relative;
+            height: 100vh;
+        }
+
+        .modal {
+            position: absolute;
+            background-color: #2e2020af;
+            left: 0;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background-color: #fff;
+            padding: 50px;
+            display: flex;
+            align-items: center;
+            flex-direction: column;
+            width: 80%;
+            position: relative;
+            border-top-width: 5px;
+            border-top-color: #2cb1bc;
+            border-top-style: solid;
+        }
+
+        .title {
+            text-align: center;
+            font-weight: bold;
+            font-size: 20px;
+        }
+
+        .card {
+            box-shadow: 0 8px 16px 0 rgba(0, 0, 0, 0.2);
+            transition: 0.3s;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .w100p {
+            width: 100%;
+        }
+
+        .detail-title {
+            width: 150px;
+            font-weight: bold;
+            display: inline-block;
+        }
+
+        .img-container {
+            margin-top: 20px;
+            display: flex;
+            justify-content: space-around;
+            padding: 10px;
+        }
+
+        .img-organ {
+            width: 15%;
+            padding: 0;
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings:
+                'FILL' 0,
+                'wght' 400,
+                'GRAD' 0,
+                'opsz' 24
+        }
+
+        .close-btn {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            border-radius: 50%;
+            padding: 5px;
+        }
+
+        .close-btn:hover {
+            color: #ffffff;
+            background-color: #c40c0c;
+            cursor: pointer;
+        }
+
+        .hide {
+            display: none;
+        }
+
+        .loader {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            position: relative;
+            animation: rotate 1s linear infinite
+        }
+
+        .loader::before,
+        .loader::after {
+            content: "";
+            box-sizing: border-box;
+            position: absolute;
+            inset: 0px;
+            border-radius: 50%;
+            border: 5px solid #FFF;
+            animation: prixClipFix 2s linear infinite;
+        }
+
+        .loader::after {
+            border-color: #FF3D00;
+            animation: prixClipFix 2s linear infinite, rotate 0.5s linear infinite reverse;
+            inset: 6px;
+        }
+
+        @keyframes rotate {
+            0% {
+                transform: rotate(0deg)
+            }
+
+            100% {
+                transform: rotate(360deg)
+            }
+        }
+
+        @keyframes prixClipFix {
+            0% {
+                clip-path: polygon(50% 50%, 0 0, 0 0, 0 0, 0 0, 0 0)
+            }
+
+            25% {
+                clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 0, 100% 0, 100% 0)
+            }
+
+            50% {
+                clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 100% 100%, 100% 100%)
+            }
+
+            75% {
+                clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 0 100%, 0 100%)
+            }
+
+            100% {
+                clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 0 100%, 0 0)
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <video id="video" autoplay playsinline></video>
+        <button id="capture-btn">Predict</button>
+        <canvas id="canvas" style="display: none;"></canvas>
+    </div>
+
+    <div class="hide" id="modal">
+    </div>
+    <script>
+        function startVideoStream() {
+            var video = document.getElementById('video');
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.onloadedmetadata = function () {
+                        var minDimension = Math.min(video.videoWidth, video.videoHeight);
+                        video.width = minDimension;
+                        video.height = minDimension;
+                    };
+                })
+                .catch(error => {
+                    console.error("Error accessing the device camera", error);
+                });
+        }
+
+        const modal = document.getElementById("modal");
+
+        function captureAndUploadImage() {
+            modal.innerHTML = `<span class="loader"></span>`;
+            modal.className = "modal";
+
+            var video = document.getElementById('video');
+            var canvas = document.getElementById('canvas');
+            var context = canvas.getContext('2d');
+
+            // Calculate the size and position for square crop
+            var size = Math.min(video.videoWidth, video.videoHeight);
+            var sx = (video.videoWidth - size) / 2;
+            var sy = (video.videoHeight - size) / 2;
+            // Set canvas size to the size of the square crop
+            canvas.width = size;
+            canvas.height = size;
+            // Draw the video frame to the canvas with the square crop
+            context.drawImage(video, sx, sy, size, size, 0, 0, size, size);
+
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append('image', blob, 'capture.png');
+                fetch('/api/v1/predicts/rasp', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        let content = document.createElement('div');
+                        content.className = 'modal-content card';
+
+                        if (data.organs.length == 0) {
+                            content.innerHTML = `
+                            <span class="material-symbols-outlined close-btn" id="close-btn">close</span>
+                            <p class="title">Predict server is disconnected. Please try another time</p>
+                            `;
+                        } else {
+                            content.innerHTML = `
+                            <span class="material-symbols-outlined close-btn" id="close-btn">close</span>
+                            <p class="title">${data.plant.common_name}</p>
+                            <div class="w100p card">
+                                <p class="detail"><span class="detail-title">Tên khác:</span>${data.plant.another_name}</p>
+                                <p class="detail"><span class="detail-title">Tên khoa học:</span>${data.plant.binomial_name}</p>
+                                <p class="detail"><span class="detail-title">Họ:</span>${data.plant.family}</p>
+                                <p class="detail"><span class="detail-title">Bộ phận sử dụng:</span>${data.plant.usable_part}</p>
+                                <p class="detail"><span class="detail-title">Chức năng:</span>${data.plant.function}</p>
+                                <p class="detail"><span class="detail-title">Cách dùng:</span>${data.plant.usage}</p>
+                            </div>
+                            `;
+                            let imgContainer = document.createElement('div');
+                            imgContainer.className = 'img-container card w100p';
+                            data.organs.forEach((organ) => {
+                                imgContainer.innerHTML += `<img class="img-organ card" src="${organ.thumb_img_url}" />`;
+                            });
+                            content.appendChild(imgContainer);
+                        }
+
+                        modal.innerHTML = "";
+                        modal.appendChild(content);
+                        const closeBtn = document.getElementById("close-btn");
+                        closeBtn.addEventListener("click", () => {
+                            modal.className = "hide";
+                        });
+                    })
+                    .catch(error => {
+                        console.error("Error uploading image to server", error);
+                    });
+            }, 'image/jpeg')
+        }
+
+        document.getElementById('capture-btn').addEventListener('click', function () {
+            captureAndUploadImage();
+        });
+        startVideoStream();
+    </script>
+</body>
+
+</html>

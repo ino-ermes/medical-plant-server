@@ -1,92 +1,132 @@
-import tensorflow as tf
-import numpy as np
+import json
+import socket
+import uuid
+import threading
 
-class Predicter:
+class PredictClient:
+    
     __instance = None
 
     @staticmethod
     def get_instance():
-        if Predicter.__instance is None:
-            Predicter()
-        return Predicter.__instance
-    
-    def __init__(self):
-        if Predicter.__instance is not None:
+        if PredictClient.__instance is None:
+            PredictClient()
+        return PredictClient.__instance
+
+    def __init__(self, PORT=5001):
+        if PredictClient.__instance is not None:
             raise Exception("This class is a singleton!")
-        else:
-            Predicter.__instance = self
-    
-    def loadModel(self, path):
-        data_augmentation = tf.keras.Sequential(
-            [
-                tf.keras.layers.RandomFlip("horizontal", input_shape=(224, 224, 3)),
-                tf.keras.layers.RandomRotation(0.2),
-                tf.keras.layers.RandomZoom(0.2),
-                tf.keras.layers.RandomBrightness(factor=0.2),
-            ]
-        )
-        base_model = tf.keras.applications.InceptionResNetV2(
-            weights=None, include_top=False, input_shape=(224, 224, 3)
-        )
-        # base_model = tf.keras.applications.ResNet152V2(
-        #     weights=None, include_top=False, input_shape=(224, 224, 3)
-        # )
-        base_model.trainable = False
-
-        inputs = tf.keras.layers.Input(shape=(224, 224, 3))
-        x = data_augmentation(inputs)
-        # x = tf.keras.applications.resnet_v2.preprocess_input(x)
-        x = tf.keras.applications.inception_resnet_v2.preprocess_input(x)
-        x = base_model(x, training=False)
-        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        x = tf.keras.layers.Dense(512, activation="relu")(x)
-        x = tf.keras.layers.Dropout(0.3)(x)
-        output = tf.keras.layers.Dense(46 , name="ouput")(x)
-        model = tf.keras.models.Model(inputs=inputs, outputs=output)
-
-        base_model.trainable = True
-
-        # Fine-tune from this layer onwards
-        fine_tune_at = 200
-
-        # Freeze all the layers before the `fine_tune_at` layer
-        for layer in base_model.layers[:fine_tune_at]:
-            layer.trainable = False
-
-        base_learning_rate = 0.0001
-        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=base_learning_rate/2.0),
-                    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                    metrics="accuracy")
-
-        model.load_weights(path)
         
-        self.model = model
+        PredictClient.__instance = self
         
-    def __decode_img(self, img):
-        img = tf.io.decode_jpeg(img, channels=3)
-        return tf.image.resize(img, [224, 224])
+        self.PORT = PORT
+        
+        self.BUFSIZE = 4096
+        self.SERVER = socket.gethostbyname(socket.gethostname())
+        print("Server address:", self.SERVER)
+        self.ADDR = (self.SERVER, self.PORT)
+        self.FORMAT = "utf-8"
+        self.SEP = ':!'.encode(self.FORMAT)
+        self.BUFFER = b''
+        self.results = dict()
+        self.listening = False
 
-    def predict_top_5(self, image_url):
-        # img = tf.io.read_file('/content/1699602827587.jpg')
-        img = tf.io.read_file(tf.keras.utils.get_file(origin=image_url))
-        img = self.__decode_img(img)
-        img_batch = tf.expand_dims(img, 0)
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind(self.ADDR)
+        self.server.listen(1)
+        
+        self.lock = threading.Lock()      
 
-        prediction = self.model.predict(img_batch)[0]
-        score = tf.nn.softmax(prediction)
-        
-        top_indices = np.argsort(score)[-5:][::-1]
-        
-        return [float(i + score[i]) for i in top_indices]
-    
-    def predict(self, image_url):
-        img = tf.io.read_file(tf.keras.utils.get_file(origin=image_url))
-        img = self.__decode_img(img)
-        img_batch = tf.expand_dims(img, 0)
+    def __recv(self):
+        try:
+            endIndex = -1
+            while True:
+                chunk = self.client.recv(self.BUFSIZE)
+                
+                if not chunk:
+                    self.BUFFER = b''
+                    break
+                
+                self.BUFFER += chunk
+                
+                endIndex = self.BUFFER.find(self.SEP)
+                if endIndex != -1:
+                    break
+            
+            if self.BUFFER:
+                data = self.BUFFER[ : endIndex]
+                self.BUFFER = self.BUFFER[endIndex + len(self.SEP) : ]
+                return data.decode(self.FORMAT)
+            return ''
+        except:
+            return ''
 
-        prediction = self.model.predict(img_batch)[0]
-        score = tf.nn.softmax(prediction)
+    def __send(self, raw):
+        try:
+            self.client.sendall(raw.encode(self.FORMAT) + self.SEP)
+            return True
+        except:
+            return False
+
+    def listen(self):
+        threading.Thread(target=self.__connect, daemon=True).start()
+
+    def __connect(self):
+        self.lock.acquire()
+        self.listening = True
+        while True:
+            print("Listening for predict server...")
+            client, addr = self.server.accept()
+            self.client = client
+            self.addr = addr
+            
+            if not self.__send('YAWARAKAI'):
+                print("Error when connect to predict server. Retrying...")
+                client.close()
+                continue
+            key = self.__recv()
+            if key != "MYKEY":
+                self.__send("Error code: doko ni mo ikanaide")
+                client.close()
+                print("Error when connect to predict server. Retrying...")
+                continue
+
+            if not self.__send("OK"):
+                print("Error when connect to predict server. Retrying...")
+                continue
+            
+            self.listening = False
+            print("Connected to predict server")
+            break
         
-        index = np.argmax(score)
+        self.lock.release()
+
+    def predict(self, imageUrl, mode):
+        if self.listening == True:
+            return -1
         
-        return index
+        self.lock.acquire()
+        
+        id = str(uuid.uuid1())
+        request = json.dumps({"id": id, "payload": {"img_url": imageUrl, 'mode': mode}})
+        if not self.__send(request):
+            self.listen()
+            self.lock.release()
+            return -1
+        while not self.results.get(id):
+            raw = self.__recv()
+            if raw:
+                response = json.loads(raw)
+                self.results[response['id']] = response['payload']
+            else:
+                self.lock.release()
+                return -1
+            
+        self.lock.release()
+        
+        return self.results.pop(id)
+
+    def close(self):
+        self.__send('YUMEMISETE')
+        self.client.close()
+        self.server.close()
