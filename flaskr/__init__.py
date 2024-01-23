@@ -64,7 +64,7 @@ def create_app():
     app.register_blueprint(userBP)
     
     from flaskr.utils.predict_helper import PredictClient
-    PredictClient(5001).listen()
+    PredictClient.get_instance().init_app(app)
     
     import cloudinary
     cloudinary.config(

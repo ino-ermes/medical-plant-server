@@ -1,10 +1,11 @@
-import json
-import socket
+from threading import Lock
+from flask_socketio import SocketIO, emit
 import uuid
-import threading
+from flask import request
+import time
+import os
 
 class PredictClient:
-    
     __instance = None
 
     @staticmethod
@@ -13,120 +14,79 @@ class PredictClient:
             PredictClient()
         return PredictClient.__instance
 
-    def __init__(self, PORT=5001):
+    def __init__(self):
         if PredictClient.__instance is not None:
             raise Exception("This class is a singleton!")
-        
-        PredictClient.__instance = self
-        
-        self.PORT = PORT
-        
-        self.BUFSIZE = 4096
-        self.SERVER = socket.gethostbyname(socket.gethostname())
-        print("Server address:", self.SERVER)
-        self.ADDR = (self.SERVER, self.PORT)
-        self.FORMAT = "utf-8"
-        self.SEP = ':!'.encode(self.FORMAT)
-        self.BUFFER = b''
-        self.results = dict()
-        self.listening = False
-
-        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server.bind(self.ADDR)
-        self.server.listen(1)
-        
-        self.lock = threading.Lock()      
-
-    def __recv(self):
-        try:
-            endIndex = -1
-            while True:
-                chunk = self.client.recv(self.BUFSIZE)
-                
-                if not chunk:
-                    self.BUFFER = b''
-                    break
-                
-                self.BUFFER += chunk
-                
-                endIndex = self.BUFFER.find(self.SEP)
-                if endIndex != -1:
-                    break
+        else:
+            self.__socket = SocketIO()
+            def handle_predict_response(data):
+                try:
+                    id = data['id']
+                    result = data['result']
+                except:
+                    return
+                with self.__lock:
+                    if self.__response_data.get(id) == -1:
+                        self.__response_data[id] = result
+            self.__socket.on_event('predict_result', handle_predict_response)
             
-            if self.BUFFER:
-                data = self.BUFFER[ : endIndex]
-                self.BUFFER = self.BUFFER[endIndex + len(self.SEP) : ]
-                return data.decode(self.FORMAT)
-            return ''
-        except:
-            return ''
-
-    def __send(self, raw):
-        try:
-            self.client.sendall(raw.encode(self.FORMAT) + self.SEP)
-            return True
-        except:
-            return False
-
-    def listen(self):
-        threading.Thread(target=self.__connect, daemon=True).start()
-
-    def __connect(self):
-        self.lock.acquire()
-        self.listening = True
-        while True:
-            print("Listening for predict server...")
-            client, addr = self.server.accept()
-            self.client = client
-            self.addr = addr
+            def handle_connect(auth):
+                try:
+                    if auth["key"] == self.__predict_key:
+                        with self.__lock:
+                            if self.__curSid is None:
+                                self.__curSid = request.sid
+                            else:
+                                return
+                    else:
+                        return
+                except:                    
+                    return
+                print("Predict server is connected")
+                emit('message', 'i found out')
+            self.__socket.on_event('connect', handle_connect)
             
-            if not self.__send('YAWARAKAI'):
-                print("Error when connect to predict server. Retrying...")
-                client.close()
-                continue
-            key = self.__recv()
-            if key != "MYKEY":
-                self.__send("Error code: doko ni mo ikanaide")
-                client.close()
-                print("Error when connect to predict server. Retrying...")
-                continue
-
-            if not self.__send("OK"):
-                print("Error when connect to predict server. Retrying...")
-                continue
+            def handle_disconnect():
+                with self.__lock:
+                    if request.sid == self.__curSid:
+                        self.__curSid = None
+                        print("Predict server is disconnected")
+            self.__socket.on_event('disconnect', handle_disconnect)
             
-            self.listening = False
-            print("Connected to predict server")
-            break
-        
-        self.lock.release()
+            
+            self.__app = None
+            self.__lock = Lock()
+            self.__response_data = {}
+            self.__curSid = None
+            self.__predict_key = os.getenv("PREDICT_SECRET")
+            PredictClient.__instance = self
 
-    def predict(self, imageUrl, mode):
-        if self.listening == True:
-            return -1
-        
-        self.lock.acquire()
+    def init_app(self, app):
+        self.__app = app
+        self.__socket.init_app(app)
+
+    def isPredictServerOn(self):
+        with self.__lock:
+            return self.__curSid is not None
+
+    def predict(self, img_url, mode):
         
         id = str(uuid.uuid1())
-        request = json.dumps({"id": id, "payload": {"img_url": imageUrl, 'mode': mode}})
-        if not self.__send(request):
-            self.listen()
-            self.lock.release()
-            return -1
-        while not self.results.get(id):
-            raw = self.__recv()
-            if raw:
-                response = json.loads(raw)
-                self.results[response['id']] = response['payload']
-            else:
-                self.lock.release()
-                return -1
+        self.__socket.emit('predict', {'id': id, 'img_url': img_url, 'mode': mode}, to=self.__curSid)
+        with self.__lock:
+            self.__response_data[id] = -1
             
-        self.lock.release()
+        start_time = time.time()
+        while True:
+            with self.__lock:
+                response = self.__response_data.get(id)
+                if response != -1:
+                    self.__response_data.pop(id)
+                    break
+            if time.time() - start_time > 60:
+                self.__response_data.pop(id)
+                raise TimeoutError("Prediction request timed out after 60 seconds")
+        return response 
         
-        return self.results.pop(id)
-
-    def close(self):
-        self.__send('YUMEMISETE')
-        self.client.close()
-        self.server.close()
+        
+        

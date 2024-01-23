@@ -17,6 +17,11 @@ predictBP = Blueprint("predicts", __name__, url_prefix="/api/v1/predicts")
 @predictBP.post("")
 @access_token_required
 def predictPlant(requestUserId):
+    if not PredictClient.get_instance().isPredictServerOn():
+        return {
+            "predict_list": [],
+        }
+    
     if "image" not in request.files or not request.files["image"].filename:
         raise BadRequestError("Missing image")
     if not request.files["image"].filename.endswith(("png", "jpg", "jpeg")):
@@ -29,13 +34,6 @@ def predictPlant(requestUserId):
     )
 
     predictResults = PredictClient.get_instance().predict(img_url, "0")
-
-    print(predictResults)
-
-    if predictResults == -1:
-        return {
-            "predict_list": [],
-        }
 
     predictResults.sort()
 
@@ -212,6 +210,12 @@ def updatePredict(requestUserId, predict_id):
 
 @predictBP.post("/rasp")
 def predictPlantForRasp():
+    if not PredictClient.get_instance().isPredictServerOn():
+        return {
+            "plant": {},
+            "organs": [],
+        }
+    
     if "image" not in request.files or not request.files["image"].filename:
         raise BadRequestError("Missing image")
     if not request.files["image"].filename.endswith(("png", "jpg", "jpeg")):
@@ -222,11 +226,5 @@ def predictPlantForRasp():
     img_url = upload_result["secure_url"]
 
     plantId = PredictClient.get_instance().predict(img_url, "1")
-
-    if plantId == -1:
-        return {
-            "plant": {},
-            "organs": [],
-        }
 
     return redirect(f"/api/v1/plants/{plantId}")
